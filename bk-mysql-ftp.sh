@@ -6,7 +6,9 @@ bk_ftp_port=21
 bk_ftp_path=/backup
 log=~/tmp/bk.log
 DATE=$(date)
-# suponeos que usamos .my.cnf si no lo usamos lo creamos... easy... más seguro y universalmente compatible
+# Mysql Connect
+# We wait .my.cnf for connection this do it compatible whit any system easy
+# More secure and not need your password here
 if [ ! -d ~/tmp ];then
 mkdir ~/tmp
 fi
