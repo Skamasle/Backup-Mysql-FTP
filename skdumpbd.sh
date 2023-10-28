@@ -2,22 +2,14 @@
 # Respaldamos todas las bases de datos del servidor, 
 # Creamos un archivo con el log, 
 # 
-# v0.4 Cambios menores, añadido conteo de bases de datos.
-# 21 de dic del 2014
-# Maks Skamasle | Skamasle.com | yo@skamasle.com | twiter @skamasle
-#   This program is free software: you can redistribute it and/or modify
-#   it under the terms of the GNU General Public License as published by
-#   the Free Software Foundation, either version 3 of the License, or
-#   (at your option) any later version.
-#
-#   This program is distributed in the hope that it will be useful,
-#   but WITHOUT ANY WARRANTY; without even the implied warranty of
-#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#   GNU General Public License for more details. http://www.gnu.org/licenses/
-# Bajo licencia GNU GPL http://www.gnu.org/licenses/ se distribuye sin ninguna garantía.
-# Actualizaciones  y más: http://kb.skamasle.com/2014/respaldar-todas-las-bases-de-datos-backup-all-data-bases-plesk-cpanel-onfig/
-backupin=/root/sk-mysqldump # Ruta para guardar los backup
-expira=5 	# Número de días que se retienen los backups de MSYQL en local (archivos mayores a 2 días se borran antes del backup)
+# v0.5 
+# 21 de dic del 2014 | 0.5 2019
+# fix 0.5 cpanel obtenemos la contraseña mas limpiamente 
+# fix max_allowed_packet en mysqldump -- 14 feb 2023
+
+backupin=/root/mysql_backup # Ruta para guardar los backup
+logfile=/root/BackupLog.txt
+expira=7 	# Número de días que se retienen los backups de MSYQL en local (archivos mayores a 2 días se borran antes del backup)
 # Datos de mysql.
 # Tipo de servidor.
 # Detectamos el tipo de servidor, plesk, cpanel o ispconfig para obtener automaticamente la clave de la base de datos.
@@ -33,42 +25,39 @@ myhost="localhost"
 
 if [ $servertype = plesk ]; then
 	myuser="admin"	
-	mypass=`cat /etc/psa/.psa.shadow` 
+	mypass=$(cat /etc/psa/.psa.shadow)
 fi
 if [ $servertype = cpanel ]; then
-# cPanel algunos servidores en el .my.cnf tienen " en el pass y otros no así que hay que
-# editar el cut -d '"' en caso de no tener comillas cambiar el " por un =, las versiones viejas no tiene
-# comillas.... las nuevas luego de 11.32 suelen tenerlo
-	mypass=`cat /root/.my.cnf |grep password | cut -d '"' -f2`
+	#mypass=$(cat /root/.my.cnf |grep password | tr '"' ' ' | tr "'" " " | awk '{ print $2 }')
+	mypass=$(cat /root/.my.cnf |grep password | tr '"' ' ' | tr "'" " " | awk -F "=" '{ print $2 }' | sed -e "s/ //g") 
 fi
 if [ $servertype = ispconfig ]; then
-	mypass=`cat /usr/local/ispconfig/server/lib/mysql_clientdb.conf |grep password | cut -d "'" -f2`
+	mypass=$(cat /usr/local/ispconfig/server/lib/mysql_clientdb.conf |grep password | cut -d "'" -f2)
 fi
 if [ $servertype = directadmin ]; then
 	myuser="da_admin"
-	mypass=`cat /usr/local/directadmin/conf/mysql.conf |grep passwd | cut -d "=" -f2`
+	mypass=$(cat /usr/local/directadmin/conf/mysql.conf |grep passwd | cut -d "=" -f2)
 fi
 
 MKDIR=/bin/mkdir
 TOUCH=/bin/touch
-logfile=/root/SK-BackupLog.txt
 fecha=$(/bin/date)
 if [ ! -d $backupin ]; then
 	$MKDIR $backupin 
 else
-	find $backupin -type d -mtime +$expira | xargs rm -Rf
+	find "$backupin" -type d -mtime +$expira | xargs rm -Rf
 	
 fi
 if [ ! -e $logfile ]; then
 	$TOUCH $logfile
 fi
-carpetabk=$backupin/`date +%Y-%m-%d-h%H%M-%S`
+carpetabk=$backupin/$(date +%Y-%m-%d-h%H%M-%S)
 
 if [ ! -d $carpetabk ]; then
 	$MKDIR -p $carpetabk
 fi
 # no hace falta cambiarlo
-lists=$(echo "show databases;" | mysql -h $myhost -u $myuser -p$mypass | grep -v Database | grep -v information_schema | grep -v performance_schema | grep -v phpmyadmin | grep -v mysql)
+lists=$(echo "show databases;" | mysql -h $myhost -u $myuser -p${mypass} | grep -v Database | grep -v information_schema | grep -v performance_schema | grep -v mysql)
 
 echo "Comenzando el respaldo de las bases de datos" >> $logfile
 tput setaf 1
@@ -81,17 +70,18 @@ for db in $lists
 do
 		tput setaf 2	
  	echo "Respaldo base de datos $db"
-	mysqldump -h $myhost -u$myuser -p$mypass --opt $db > $carpetabk/$db.sql 2>/tmp/skdump_errorlog
+	mysqldump -h $myhost -u$myuser -p${mypass} --max_allowed_packet=256M --single-transaction --opt --events --routines --triggers $db > $carpetabk/$db.sql 2>${logfile}
 	echo "Respaldando $db" >> $logfile
 	tput setaf 3	
-	echo "Comprimiendo (gzip) base de datos --- $db"
+	echo "Comprimiendo base de datos --- $db"
 	tput sgr0	
-	gzip $carpetabk/$db.sql
+	sha256sum $carpetabk/$db.sql > $carpetabk/$db.sql.sha
+	# gzip $carpetabk/$db.sql
+	zstd --rm --no-progress $carpetabk/$db.sql
 	let "C = $C + 1"
 done
 echo "Backup completo, se respaldaron $C Bases de Datos!" >> $logfile
 echo $fecha >> $logfile
-echo "Puedes revisar el log en $logfile y el errorlog en /tmp/skdump_errorlog"
 tput setaf 2
 echo "Se respaldaron $C Bases de datos"
 tput sgr0
